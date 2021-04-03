@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <style type="text/css">
+        table, td, th {
+            border: 1px solid black;
+        }
+
+        .loading table {
+            visibility: hidden;
+        }
+
+        .loading title {
+            visibility: visible;
+        }
+
+        :not(.loading) #progress {
+            visibility: collapse;
+            display: none;
+        }
+
+        .loading #progress {
+            visibility: visible;
+            display: inherit;
+        }
+
+        form {
+            padding: 10px;
+        }
+
+        th {
+            background-color: cornflowerblue;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        </style>
+        <script async type="module">
+            const processAddress = async (address) => {
+                let result = await fetch('https://api.thegraph.com/subgraphs/name/uniswap/uniswap-v2',
+                {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        query: `
+                        {
+                            swaps(where: {
+                                to: "${address}"
+                            })
+                            {
+                                id
+                                pair {
+                                    token0 {
+                                        symbol
+                                    }
+                                    token1 {
+                                        symbol
+                                    }
+                                }
+                                amount0In
+                                amount0Out
+                                amount1In
+                                amount1Out
+                                amountUSD
+                                timestamp
+                            }
+                        }
+                        `
+                    })
+                });
+
+                const collect = function(items, out, ts, token, usd) {
+                    if(out) {
+                        items.push({
+                            date: new Date(ts * 1000).toLocaleDateString(),
+                            symbol: token.symbol,
+                            qty: out,
+                            price: usd / out,
+                            total: usd
+                        });
+                    }
+                }
+
+                let items = [];
+
+                return result.json().then(data => {
+                    data.data.swaps.forEach(swap => {
+                        var out0 = parseInt(swap.amount0Out);
+                        var out1 = parseInt(swap.amount1Out);
+
+                        var usd = parseInt(swap.amountUSD);
+
+                        collect(items, out0, swap.timestamp, swap.pair.token0, usd);
+                        collect(items, out1, swap.timestamp, swap.pair.token1, usd);
+                    });
+
+                    return items;
+                });
+            };
+
+            let formElem = document.querySelector("#form");
+            let addressElem = document.querySelector("#address");
+
+            formElem.onsubmit = async (e) => {
+                e.preventDefault();
+
+                try
+                {
+                    let div = document.querySelector("#data");
+                    div.classList.add("loading");
+
+                    let table = document.querySelector('table');
+                    
+                    let tbody = table.querySelector("tbody");
+
+                    var items = await processAddress(addressElem.value);
+                    tbody.innerHTML = "";
+                    items.forEach(item => {
+                        let tr = document.createElement('tr');
+                        
+                        let symbol = document.createElement('td');
+                        let price = document.createElement('td');
+                        let date = document.createElement('td');
+                        let qty = document.createElement('td');
+                        let total = document.createElement('td');
+
+                        symbol.innerText = item.symbol;
+                        price.innerText = item.price;
+                        date.innerText = item.date;
+                        qty.innerText = item.qty;
+                        total.innerText = item.total;
+                        
+                        tr.appendChild(date);
+                        tr.appendChild(symbol);
+                        tr.appendChild(price);
+                        tr.appendChild(qty);
+                        tr.appendChild(total);
+
+                        tbody.appendChild(tr);
+                    });
+                }
+                catch(error)
+                {
+                    alert('Failed to load');
+                }
+                finally {
+                    data.classList.remove("loading");
+                }
+            };
+        </script>
+    </head>
+    <body>
+        <div id="data">
+            <form id="form">
+                <label for="address">Address</label>
+                <input type="text" name="address" value="" id="address"/>
+                <input type="submit" value="Fetch" />
+            </form>
+            <p id="progress">Loading..</p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Symbol</th>
+                        <th>Price</th>
+                        <th>Qty</th>
+                        <th>Total</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </body>
+</html>
