@@ -74,7 +74,7 @@
                 const collect = function(items, out, ts, token, usd) {
                     if(out) {
                         items.push({
-                            date: new Date(ts * 1000).toLocaleDateString(),
+                            date: ts,
                             symbol: token.symbol,
                             qty: out,
                             price: usd / out,
@@ -116,6 +116,11 @@
                     let tbody = table.querySelector("tbody");
 
                     var items = await processAddress(addressElem.value);
+
+                    items.sort((a, b) => {
+                        return b.date - a.date;
+                    });
+
                     tbody.innerHTML = "";
                     items.forEach(item => {
                         let tr = document.createElement('tr');
@@ -128,7 +133,7 @@
 
                         symbol.innerText = item.symbol;
                         price.innerText = item.price;
-                        date.innerText = item.date;
+                        date.innerText = new Date(item.date * 1000).toLocaleDateString();
                         qty.innerText = item.qty;
                         total.innerText = item.total;
                         
