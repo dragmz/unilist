@@ -1,8 +1,11 @@
 <!DOCTYPE html>
 <html>
-    <head>
-        <style type="text/css">
-        table, td, th {
+
+<head>
+    <style type="text/css">
+        table,
+        td,
+        th {
             border: 1px solid black;
         }
 
@@ -36,11 +39,10 @@
             width: 100%;
             border-collapse: collapse;
         }
-
-        </style>
-        <script async type="module">
-            const processAddress = async (address) => {
-                let result = await fetch('https://api.thegraph.com/subgraphs/name/uniswap/uniswap-v2',
+    </style>
+    <script async type="module">
+        const processAddress = async (address) => {
+            let result = await fetch('https://api.thegraph.com/subgraphs/name/uniswap/uniswap-v2',
                 {
                     method: 'POST',
                     body: JSON.stringify({
@@ -71,111 +73,114 @@
                     })
                 });
 
-                const collect = function(items, out, ts, token, usd) {
-                    if(out) {
-                        items.push({
-                            date: ts,
-                            symbol: token.symbol,
-                            qty: out,
-                            price: usd / out,
-                            total: usd
-                        });
-                    }
+            const collect = function (items, out, ts, token, usd) {
+                if (out) {
+                    items.push({
+                        date: ts,
+                        symbol: token.symbol,
+                        qty: out,
+                        price: usd / out,
+                        total: usd
+                    });
+                }
+            }
+
+            let items = [];
+
+            return result.json().then(data => {
+                console.log(data);
+                if (data.errors) {
+                    throw 'Error: ' + data.errors.map(x => x.message).join(", ");
                 }
 
-                let items = [];
+                data.data.swaps.forEach(swap => {
+                    var usd = parseInt(swap.amountUSD);
 
-                return result.json().then(data => {
-                    data.data.swaps.forEach(swap => {
-                        var out0 = parseInt(swap.amount0Out);
-                        var out1 = parseInt(swap.amount1Out);
+                    var out0 = parseInt(swap.amount0Out);
+                    collect(items, out0, swap.timestamp, swap.pair.token0, usd);
 
-                        var usd = parseInt(swap.amountUSD);
-
-                        collect(items, out0, swap.timestamp, swap.pair.token0, usd);
-                        collect(items, out1, swap.timestamp, swap.pair.token1, usd);
-                    });
-
-                    return items;
+                    var out1 = parseInt(swap.amount1Out);
+                    collect(items, out1, swap.timestamp, swap.pair.token1, usd);
                 });
-            };
 
-            let formElem = document.querySelector("#form");
-            let addressElem = document.querySelector("#address");
+                return items;
+            });
+        };
 
-            formElem.onsubmit = async (e) => {
-                e.preventDefault();
+        const mappings = [
+            ["Date", e => new Date(e.date * 1000).toLocaleDateString()],
+            ["Symbol", e => e.symbol],
+            ["Price", e => e.price.toFixed(10)],
+            ["Qty", e => e.qty],
+            ["Total", e => e.total]
+        ];
 
-                try
-                {
-                    let div = document.querySelector("#data");
-                    div.classList.add("loading");
+        let formEl = document.querySelector("#form");
+        let addressEl = document.querySelector("#address");
 
-                    let table = document.querySelector('table');
-                    
-                    let tbody = table.querySelector("tbody");
+        formEl.onsubmit = async (e) => {
+            e.preventDefault();
 
-                    var items = await processAddress(addressElem.value);
+            try {
+                let div = document.querySelector("#data");
+                div.classList.add("loading");
 
-                    items.sort((a, b) => {
-                        return b.date - a.date;
+                let tbody = document.querySelector("#tdata");
+                let thead = document.querySelector("#theader");
+
+                var items = await processAddress(addressEl.value);
+
+                items.sort((a, b) => {
+                    return b.date - a.date;
+                });
+
+                thead.innerHTML = "";
+                let headTr = document.createElement("tr");
+                mappings.forEach(mapping => {
+                    let el = document.createElement("th");
+                    el.innerText = mapping[0];
+                    headTr.appendChild(el);
+                });
+
+                thead.appendChild(headTr);
+
+                tbody.innerHTML = "";
+
+                items.forEach(item => {
+                    let tr = document.createElement('tr');
+
+                    mappings.forEach(mapping => {
+                        let el = document.createElement('td');
+                        el.innerText = mapping[1](item);
+                        tr.appendChild(el);
                     });
 
-                    tbody.innerHTML = "";
-                    items.forEach(item => {
-                        let tr = document.createElement('tr');
-                        
-                        let symbol = document.createElement('td');
-                        let price = document.createElement('td');
-                        let date = document.createElement('td');
-                        let qty = document.createElement('td');
-                        let total = document.createElement('td');
+                    tbody.appendChild(tr);
+                });
+            }
+            catch (error) {
+                alert('Failed to load: ' + error);
+            }
+            finally {
+                data.classList.remove("loading");
+            }
+        };
+    </script>
+</head>
 
-                        symbol.innerText = item.symbol;
-                        price.innerText = item.price;
-                        date.innerText = new Date(item.date * 1000).toLocaleDateString();
-                        qty.innerText = item.qty;
-                        total.innerText = item.total;
-                        
-                        tr.appendChild(date);
-                        tr.appendChild(symbol);
-                        tr.appendChild(price);
-                        tr.appendChild(qty);
-                        tr.appendChild(total);
+<body>
+    <div id="data">
+        <form id="form">
+            <label for="address">Address</label>
+            <input type="text" name="address" value="" id="address" />
+            <input type="submit" value="Fetch" />
+        </form>
+        <p id="progress">Loading..</p>
+        <table>
+            <thead id="theader"></thead>
+            <tbody id="tdata"></tbody>
+        </table>
+    </div>
+</body>
 
-                        tbody.appendChild(tr);
-                    });
-                }
-                catch(error)
-                {
-                    alert('Failed to load');
-                }
-                finally {
-                    data.classList.remove("loading");
-                }
-            };
-        </script>
-    </head>
-    <body>
-        <div id="data">
-            <form id="form">
-                <label for="address">Address</label>
-                <input type="text" name="address" value="" id="address"/>
-                <input type="submit" value="Fetch" />
-            </form>
-            <p id="progress">Loading..</p>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Date</th>
-                        <th>Symbol</th>
-                        <th>Price [USD]</th>
-                        <th>Qty</th>
-                        <th>Total [USD]</th>
-                    </tr>
-                </thead>
-                <tbody></tbody>
-            </table>
-        </div>
-    </body>
 </html>
