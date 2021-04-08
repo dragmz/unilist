@@ -88,7 +88,6 @@
             let items = [];
 
             return result.json().then(data => {
-                console.log(data);
                 if (data.errors) {
                     throw 'Error: ' + data.errors.map(x => x.message).join(", ");
                 }
