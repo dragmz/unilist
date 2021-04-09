@@ -3,6 +3,14 @@
 
 <head>
     <style type="text/css">
+        .profit {
+            color: green
+        }
+
+        .loss {
+            color: red
+        }
+
         table,
         td,
         th {
@@ -41,6 +49,14 @@
         }
     </style>
     <script async type="module">
+        const formatPrice = function (price) {
+            return price.toFixed(10);
+        }
+
+        const formatTotal = function (total) {
+            return total.toFixed(2);
+        }
+
         const processAddress = async (address) => {
             let result = await fetch('https://api.thegraph.com/subgraphs/name/uniswap/uniswap-v2',
                 {
@@ -48,6 +64,10 @@
                     body: JSON.stringify({
                         query: `
                         {
+                            bundle(id: 1) {
+                                ethPrice
+                            }
+
                             swaps(where: {
                                 to: "${address}"
                             })
@@ -56,9 +76,11 @@
                                 pair {
                                     token0 {
                                         symbol
+                                        derivedETH
                                     }
                                     token1 {
                                         symbol
+                                        derivedETH
                                     }
                                 }
                                 amount0In
@@ -73,14 +95,30 @@
                     })
                 });
 
-            const collect = function (items, out, ts, token, usd) {
-                if (out) {
+            const collect = function (items, out, ts, token, usd, ethPrice) {
+                const outFloat = parseFloat(out);
+
+                if (outFloat) {
+                    const currentPrice = token.derivedETH * ethPrice;
+
+                    const buy = {
+                        price: usd / out,
+                        total: parseFloat(usd),
+                    };
+
+                    const current = {
+                        price: currentPrice,
+                        total: currentPrice * out
+                    };
+
                     items.push({
                         date: ts,
                         symbol: token.symbol,
                         qty: out,
-                        price: usd / out,
-                        total: usd
+                        buy: buy,
+                        current: current,
+                        percent: ((current.price - buy.price) / current.price) * 100,
+                        diff: (current.price * out) - (buy.price * out)
                     });
                 }
             }
@@ -92,14 +130,15 @@
                     throw 'Error: ' + data.errors.map(x => x.message).join(", ");
                 }
 
+                const ethPrice = data.data.bundle.ethPrice;
+
                 data.data.swaps.forEach(swap => {
-                    var usd = parseInt(swap.amountUSD);
-
-                    var out0 = parseInt(swap.amount0Out);
-                    collect(items, out0, swap.timestamp, swap.pair.token0, usd);
-
-                    var out1 = parseInt(swap.amount1Out);
-                    collect(items, out1, swap.timestamp, swap.pair.token1, usd);
+                    [
+                        [swap.amount0Out, swap.pair.token0],
+                        [swap.amount1Out, swap.pair.token1]
+                    ].forEach(e => {
+                        collect(items, e[0], swap.timestamp, e[1], swap.amountUSD, ethPrice);
+                    })
                 });
 
                 return items;
@@ -107,11 +146,45 @@
         };
 
         const mappings = [
-            ["Date", e => new Date(e.date * 1000).toLocaleDateString()],
-            ["Symbol", e => e.symbol],
-            ["Price", e => e.price.toFixed(10)],
-            ["Qty", e => e.qty],
-            ["Total", e => e.total]
+            {
+                name: "Date",
+                value: e => new Date(e.date * 1000).toLocaleDateString()
+            },
+            {
+                name: "Symbol",
+                value: e => e.symbol
+            },
+            {
+                name: "Qty",
+                value: e => e.qty
+            },
+            {
+                name: "Buy Price [USD]",
+                value: e => formatPrice(e.buy.price)
+            },
+            {
+                name: "Buy Total [USD]",
+                value: e => formatTotal(e.buy.total)
+            },
+            {
+                name: "Current Price [USD]",
+                value: e => formatPrice(e.current.price)
+            },
+            {
+                name: "Current Total [USD]",
+                value: e => formatTotal(e.current.total),
+            },
+            {
+                name: "PnL [USD]",
+                value: e => e.diff.toFixed(2) + " (" + e.percent.toFixed(2) + "%)",
+                cb: function (e, item) {
+                    if (item.diff > 0) {
+                        e.classList.add("profit");
+                    } else if (item.diff < 0) {
+                        e.classList.remove("loss");
+                    }
+                }
+            }
         ];
 
         let formEl = document.querySelector("#form");
@@ -137,7 +210,7 @@
                 let headTr = document.createElement("tr");
                 mappings.forEach(mapping => {
                     let el = document.createElement("th");
-                    el.innerText = mapping[0];
+                    el.innerText = mapping.name;
                     headTr.appendChild(el);
                 });
 
@@ -150,7 +223,13 @@
 
                     mappings.forEach(mapping => {
                         let el = document.createElement('td');
-                        el.innerText = mapping[1](item);
+                        const value = mapping.value(item);
+                        el.innerText = value;
+
+                        if (mapping.cb) {
+                            mapping.cb(el, item);
+                        }
+
                         tr.appendChild(el);
                     });
 
@@ -158,6 +237,9 @@
                 });
             }
             catch (error) {
+                if (console) {
+                    console.error(error);
+                }
                 alert('Failed to load: ' + error);
             }
             finally {
