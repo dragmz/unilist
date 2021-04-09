@@ -17,6 +17,10 @@
             border: 1px solid black;
         }
 
+        td {
+            padding: 2px;
+        }
+
         .loading table {
             visibility: hidden;
         }
@@ -35,8 +39,9 @@
             display: inherit;
         }
 
-        form {
+        #form {
             padding: 10px;
+            display: inline-block;
         }
 
         th {
@@ -46,6 +51,14 @@
         table {
             width: 100%;
             border-collapse: collapse;
+        }
+
+        :not(.metamask) #connect {
+            visibility: collapse;
+        }
+
+        .metamask #connect {
+            visibility: visible;
         }
     </style>
     <script async type="module">
@@ -75,10 +88,12 @@
                                 id
                                 pair {
                                     token0 {
+                                        id
                                         symbol
                                         derivedETH
                                     }
                                     token1 {
+                                        id
                                         symbol
                                         derivedETH
                                     }
@@ -112,6 +127,7 @@
                     };
 
                     items.push({
+                        id: token.id,
                         date: ts,
                         symbol: token.symbol,
                         qty: out,
@@ -145,6 +161,26 @@
             });
         };
 
+        const readFromMetaMask = async () => {
+            const accounts = await ethereum.request({ method: 'eth_requestAccounts' });
+            if (accounts.length == 0) {
+                return;
+            }
+
+            if (accounts.length > 1) {
+                alert("Multiple accounts not supported yet. Using first account.");
+            }
+
+            const account = accounts[0];
+            addressEl.value = account;
+        };
+
+        const getMoveSymbol = function (a, b) {
+            return b > a
+                ? "↑"
+                : b < a ? "↓" : "=";
+        }
+
         const mappings = [
             {
                 name: "Date",
@@ -152,27 +188,27 @@
             },
             {
                 name: "Symbol",
-                value: e => e.symbol
+                value: e => {
+                    const el = document.createElement("a");
+
+                    el.href = "https://etherscan.io/address/" + e.id;
+                    el.target = "_blank";
+                    el.innerText = e.symbol;
+
+                    return el
+                }
             },
             {
                 name: "Qty",
                 value: e => e.qty
             },
             {
-                name: "Buy Price [USD]",
-                value: e => formatPrice(e.buy.price)
+                name: "Price [USD]",
+                value: e => formatPrice(e.buy.price) + " " + getMoveSymbol(e.buy.price, e.current.price) + " " + formatPrice(e.current.price)
             },
             {
-                name: "Buy Total [USD]",
-                value: e => formatTotal(e.buy.total)
-            },
-            {
-                name: "Current Price [USD]",
-                value: e => formatPrice(e.current.price)
-            },
-            {
-                name: "Current Total [USD]",
-                value: e => formatTotal(e.current.total),
+                name: "Total [USD]",
+                value: e => formatTotal(e.buy.total) + " " + getMoveSymbol(e.buy.total, e.current.total) + " " + formatTotal(e.current.total)
             },
             {
                 name: "PnL [USD]",
@@ -184,11 +220,23 @@
                         e.classList.remove("loss");
                     }
                 }
+            },
+            {
+                name: "Operations",
+                value: e => {
+                    const swap = document.createElement("a");
+
+                    swap.href = "https://app.uniswap.org/#/swap?inputCurrency=" + e.id;
+                    swap.innerText = "♻";
+                    swap.target = "_blank";
+
+                    return swap;
+                }
             }
         ];
 
-        let formEl = document.querySelector("#form");
-        let addressEl = document.querySelector("#address");
+        const formEl = document.querySelector("#form");
+        const addressEl = document.querySelector("#address");
 
         formEl.onsubmit = async (e) => {
             e.preventDefault();
@@ -224,7 +272,7 @@
                     mappings.forEach(mapping => {
                         let el = document.createElement('td');
                         const value = mapping.value(item);
-                        el.innerText = value;
+                        el.append(value);
 
                         if (mapping.cb) {
                             mapping.cb(el, item);
@@ -246,16 +294,24 @@
                 data.classList.remove("loading");
             }
         };
+
+        if (typeof window.ethereum !== 'undefined') {
+            if (window.ethereum.isMetaMask) {
+                document.getElementById("data").classList.add("metamask");
+                document.getElementById("connect").onclick = readFromMetaMask;
+            }
+        }
     </script>
 </head>
 
 <body>
     <div id="data">
         <form id="form">
-            <label for="address">Address</label>
+            <label for="address">Address:</label>
             <input type="text" name="address" value="" id="address" />
             <input type="submit" value="Fetch" />
         </form>
+        <button id="connect">Use Metamask Address</button>
         <p id="progress">Loading..</p>
         <table>
             <thead id="theader"></thead>
