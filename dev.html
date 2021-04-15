@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/web3/1.3.5/web3.min.js"
+        integrity="sha512-S/O+gH5szs/+/dUylm15Jp/JZJsIoWlpSVMwT6yAS4Rh7kazaRUxSzFBwnqE2/jBphcr7xovTQJaopiEZAzi+A=="
+        crossorigin="anonymous"></script>
+    <style type="text/css">
+        .profit {
+            color: green
+        }
+
+        .loss {
+            color: red
+        }
+
+        table,
+        td,
+        th {
+            border: 1px solid black;
+        }
+
+        td {
+            padding: 2px;
+        }
+
+        .loading table {
+            visibility: hidden;
+        }
+
+        .loading title {
+            visibility: visible;
+        }
+
+        :not(.loading) #progress {
+            visibility: collapse;
+            display: none;
+        }
+
+        .loading #progress {
+            visibility: visible;
+            display: inherit;
+        }
+
+        #form {
+            padding: 10px;
+            display: inline-block;
+        }
+
+        th {
+            background-color: cornflowerblue;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        :not(.metamask) #connect {
+            visibility: collapse;
+        }
+
+        .metamask #connect {
+            visibility: visible;
+        }
+    </style>
+    <script async type="module">
+        const formatPrice = function (price) {
+            return price.toFixed(10);
+        }
+
+        const formatTotal = function (total) {
+            return total.toFixed(2);
+        }
+
+        const getDay = (dt) => {
+            const d = new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate()));
+            return d;
+        };
+
+        const getUniSwapTimestamp = (date) => Math.trunc((date.getTime()) / 1000);
+
+        const getEthPrices = async (dates) => {
+            const days = dates.map(e => getUniSwapTimestamp(e));
+
+            let result = await fetch('https://api.thegraph.com/subgraphs/name/uniswap/uniswap-v2',
+                {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        query: `
+                        {
+                            tokenDayDatas(
+                                first: ${days.length},
+                                where: {
+                                    date_in: [${days.join(",")}],
+    	                            token: "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+                                })
+                                {
+                                    date
+                                    priceUSD
+                                }
+                        }`
+                    })
+                });
+
+            const response = await result.json();
+            const datas = response.data.tokenDayDatas;
+
+            var prices = {};
+
+            for (const data of datas) {
+                prices[data.date] = data.priceUSD;
+            }
+
+            return prices;
+        };
+
+        const processAddress = async (address) => {
+            let result = await fetch('https://api.thegraph.com/subgraphs/name/uniswap/uniswap-v2',
+                {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        query: `
+                        {
+                            bundle(id: 1) {
+                                ethPrice
+                            }
+
+                            swaps(where: {
+                                to: "${address}"
+                            })
+                            {
+                                id
+                                pair {
+                                    token0 {
+                                        id
+                                        symbol
+                                        derivedETH
+                                    }
+                                    token1 {
+                                        id
+                                        symbol
+                                        derivedETH
+                                    }
+                                }
+                                amount0In
+                                amount0Out
+                                amount1In
+                                amount1Out
+                                amountUSD
+                                timestamp
+                                transaction {
+                                    id
+                                }
+                            }
+                        }
+                        `
+                    })
+                });
+
+            const processSwapTimestamp = (swap) => new Date(swap.timestamp * 1000);
+
+            const processSwap = async function (swap, out, token, priceInEth) {
+                const usd = swap.amountUSD;
+                const outFloat = parseFloat(out);
+
+                if (outFloat) {
+                    const currentPrice = token.derivedETH * priceInEth;
+
+                    const buy = {
+                        price: usd / out,
+                        total: parseFloat(usd),
+                    };
+
+                    const current = {
+                        price: currentPrice,
+                        total: currentPrice * out
+                    };
+
+                    const date = processSwapTimestamp(swap);
+
+                    const [tx, receipt] = await Promise.all(
+                        [
+                            web3.eth.getTransaction(swap.transaction.id),
+                            web3.eth.getTransactionReceipt(swap.transaction.id),
+                        ]);
+
+                    const feeEth = (tx.gasPrice * receipt.gasUsed) / 1000000000000000000;
+                    const feeUsd = feeEth * swap.ethFee;
+
+                    const value = {
+                        buy: buy.total,
+                        current: current.price * out - feeUsd
+                    };
+
+                    return {
+                        id: token.id,
+                        date: date,
+                        symbol: token.symbol,
+                        qty: out,
+                        buy: buy,
+                        current: current,
+                        percent: ((value.current - value.buy) / buy.total) * 100,
+                        diff: value.current - value.buy,
+                        txid: swap.transaction.id,
+                    };
+                }
+            }
+
+            const web3 = new Web3(Web3.givenProvider);
+
+            const data = await result.json();
+
+            if (data.errors) {
+                throw 'Error: ' + data.errors.map(x => x.message).join(", ");
+            }
+
+            const swaps = data.data.swaps;
+
+            for (const swap of swaps) {
+                swap.day = getDay(processSwapTimestamp(swap));
+            }
+
+            const ethPrices = await getEthPrices(swaps.map(swap => swap.day));
+            for (const swap of swaps) {
+                swap.ethFee = ethPrices[getUniSwapTimestamp(swap.day)];
+            }
+
+            var tasks =
+                swaps.map(swap =>
+                    [
+                        [swap.amount0Out, swap.pair.token0],
+                        [swap.amount1Out, swap.pair.token1]
+                    ].map(item => {
+                        const out = parseFloat(item[0]);
+
+                        if (out) {
+                            return processSwap(swap, item[0], item[1], data.data.bundle.ethPrice, ethPrices);
+                        }
+
+                        return null;
+                    }))
+                    .flat()
+                    .filter(e => e);
+
+            return Promise.all(tasks);
+        };
+
+        const readFromMetaMask = async () => {
+            const accounts = await ethereum.request({ method: 'eth_requestAccounts' });
+            if (accounts.length == 0) {
+                return;
+            }
+
+            if (accounts.length > 1) {
+                alert("Multiple accounts not supported yet. Using first account.");
+            }
+
+            const account = accounts[0];
+            addressEl.value = account;
+        };
+
+        const getMoveSymbol = function (a, b) {
+            return b > a
+                ? "↑"
+                : b < a ? "↓" : "=";
+        }
+
+        const mappings = [
+            {
+                name: "Date",
+                value: e => e.date.toLocaleDateString()
+            },
+            {
+                name: "Symbol",
+                value: e => {
+                    const el = document.createElement("a");
+
+                    el.href = "https://etherscan.io/address/" + e.id;
+                    el.target = "_blank";
+                    el.innerText = e.symbol;
+
+                    return el
+                }
+            },
+            {
+                name: "Qty",
+                value: e => e.qty
+            },
+            {
+                name: "Price [USD]",
+                value: e => formatPrice(e.buy.price)
+                    + " " + getMoveSymbol(e.buy.price, e.current.price)
+                    + " " + formatPrice(e.current.price)
+                    + ""
+            },
+            {
+                name: "Total [USD]",
+                value: e => formatTotal(e.buy.total) + " " + getMoveSymbol(e.buy.total, e.current.total) + " " + formatTotal(e.current.total)
+            },
+            {
+                name: "PnL [USD]",
+                value: e =>
+                    formatTotal(e.diff)
+                    + " (" + e.percent.toFixed(2) + "%)",
+                cb: function (e, item) {
+                    if (item.diff > 0) {
+                        e.classList.add("profit");
+                    } else if (item.diff < 0) {
+                        e.classList.add("loss");
+                    }
+                }
+            },
+            {
+                name: "Operations",
+                value: e => {
+                    const swap = document.createElement("a");
+
+                    swap.href = "https://app.uniswap.org/#/swap?inputCurrency=" + e.id;
+                    swap.innerText = "♻";
+                    swap.target = "_blank";
+
+                    const tx = document.createElement("a");
+
+                    tx.href = "https://etherscan.io/tx/" + e.txid;
+                    tx.innerText = "Tx";
+                    tx.target = "_blank";
+
+                    const div = document.createElement("div");
+                    div.appendChild(swap);
+                    div.appendChild(document.createTextNode(" "));
+                    div.appendChild(tx);
+
+                    return div;
+                }
+            }
+        ];
+
+        const formEl = document.querySelector("#form");
+        const addressEl = document.querySelector("#address");
+
+        formEl.onsubmit = async (e) => {
+            e.preventDefault();
+
+            try {
+                let div = document.querySelector("#data");
+                div.classList.add("loading");
+
+                let tbody = document.querySelector("#tdata");
+                let thead = document.querySelector("#theader");
+
+                var items = await processAddress(addressEl.value);
+
+                items.sort((a, b) => {
+                    return b.date - a.date;
+                });
+
+                thead.innerHTML = "";
+                let headTr = document.createElement("tr");
+                mappings.forEach(mapping => {
+                    let el = document.createElement("th");
+                    el.innerText = mapping.name;
+                    headTr.appendChild(el);
+                });
+
+                thead.appendChild(headTr);
+
+                tbody.innerHTML = "";
+
+                for (const item of items) {
+                    let tr = document.createElement('tr');
+
+                    for (const mapping of mappings) {
+                        let el = document.createElement('td');
+                        let value = mapping.value(item);
+
+                        if (value instanceof Promise) {
+                            value = await value;
+                        }
+
+                        el.append(value);
+
+                        if (mapping.cb) {
+                            mapping.cb(el, item);
+                        }
+
+                        tr.appendChild(el);
+                    }
+
+                    tbody.appendChild(tr);
+                }
+            }
+            catch (error) {
+                if (console) {
+                    console.error(error);
+                }
+                alert('Failed to load: ' + error);
+            }
+            finally {
+                data.classList.remove("loading");
+            }
+        };
+
+        if (typeof window.ethereum !== 'undefined') {
+            if (window.ethereum.isMetaMask) {
+                document.getElementById("data").classList.add("metamask");
+                document.getElementById("connect").onclick = readFromMetaMask;
+            }
+        }
+    </script>
+</head>
+
+<body>
+    <div id="data">
+        <form id="form">
+            <label for="address">Address:</label>
+            <input type="text" name="address" value="" id="address" />
+            <input type="submit" value="Fetch" />
+        </form>
+        <button id="connect">Use MetaMask Address</button>
+        <p id="progress">Loading..</p>
+        <table>
+            <thead id="theader"></thead>
+            <tbody id="tdata"></tbody>
+        </table>
+    </div>
+</body>
+
+</html>
